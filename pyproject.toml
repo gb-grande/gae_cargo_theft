@@ -6,9 +6,12 @@ authors = ["Gustavo Grande <gustavobgrande@hotmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = ">=3.10,<3.13"
 pandas = "^2.2.2"
 openpyxl = "^3.1.5"
+networkx = "^3.3"
+osmnx = "^1.9.4"
+matplotlib = "^3.9.2"
 
 
 [build-system]

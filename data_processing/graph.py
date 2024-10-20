@@ -31,7 +31,22 @@ def createGeoDicts(gdf, indexColumn):
         indexToGeo[gdf[indexColumn][i]] = gdf['geometry'][i]
     return geoToIndex, indexToGeo
 
-def createEdgesDf(gdf, indexColumn, kNeighbors=3):
+def normalize(string):
+    string = string.lower()
+    string = string.replace(" ", "-")
+    string = string.replace("/", "-")
+    #subsituti acentos
+    string = string.replace("á", "a")
+    string = string.replace("é", "e")
+    string = string.replace("ú", "u")
+    string = string.replace("ó", "o")
+    string = string.replace("ç", "c")
+    string = string.replace("ã", "a")
+    string = string.replace("â", "a")
+    string = string.replace("í", "i")
+    return string
+
+def createEdgesDf(gdf, indexColumn, kNeighbors=10, maxDist=1000):
     #array to temp store edges
     edgesArray = np.zeros((len(gdf)*kNeighbors, 3), dtype=np.int64)
     #creates dictionary that maps point to geometry
@@ -41,23 +56,30 @@ def createEdgesDf(gdf, indexColumn, kNeighbors=3):
     data = [[x.x, x.y] for x in data]
     #creates tree to index points
     tree = KDTree(data)
+    indexInEdgesArray=0
     for i, row in gdf.iterrows():
         currentGeo = row['geometry']
         currentPoint = (currentGeo.x, currentGeo.y)
         #finds k nearest points
-        dist, indexes = tree.query(currentPoint, k=kNeighbors+1)
+        dist, indexes = tree.query(currentPoint, k=kNeighbors+1, distance_upper_bound=maxDist)
         #first point is the point which we used to query
         for j, index in enumerate(indexes):
             if j == 0:
                 continue
+            #point's distance is greater than max_dist so ignore
+            if index == len(tree.data):
+                break
             #gets point
             point = tree.data[index]
             point = shapely.Point(point)
             #gets index of gdf which the point represents
             actual_index = geoToIndex[point]
-            edgesArray[i*kNeighbors+j-1] = [row[indexColumn], actual_index, dist[j]]
+            edgesArray[indexInEdgesArray] = [row[indexColumn], actual_index, dist[j]]
+            indexInEdgesArray+=1
+    edgesArray = edgesArray[:indexInEdgesArray]
     edgesDf = pd.DataFrame(edgesArray, columns=['u', 'v', 'dist'])
     return edgesDf
+
 
 #receives crimedf joined with city graph nodes
 def createNodesDf(mergedGdf):
@@ -70,42 +92,41 @@ def createNodesDf(mergedGdf):
     GEO = columns.index("latitude")
     #constructed using stolen vehicles dataset from 2017 - 2024
     local_subtype = [
-    'acougue/frigorífico-câmara frigorífica', 'via pública-transeunte', 'area de descanso-interior de veiculo particular',
-    'mercado', 'oficina', 'parque/bosque/horto/reserva',
-    'auto-peças', 'praça de pedágio-cabine/posto', 'bar/botequim',
-    'delegacia/distrito policial', 'padaria/confeitaria', 'armazém/empório',
-    'lanchonete/pastelaria/pizzaria-outros', 'via pública-ciclofaixa', 'interior veículo de carga',
-    'metroviário e ferroviário metropolitano', 'feira-livre-outros', 'praça de pedágio-outros',
-    'açougue/frigorífico', 'rodoviário', 'obra/construção',
-    'área de descanso', 'posto de auxílio', 'lote de terreno',
-    'tunel/viaduto/ponte-transeunte', 'transportadora', 'atacadista',
-    'conveniência', 'estacionamento', 'area de descanso-transeunte',
-    'praça', 'acougue/frigorífico-outros', 'posto de auxílio-interior de veiculo de carga',
-    'rodoviário-outros', 'fabrica/indústria', 'fábrica/indústria',
-    'estacionamento particular', 'balança-outros', 'loja de material de construção',
-    'mecânica/borracharia', 'restaurante-outros', 'sala de reuniões/convenções',
-    'interior de transporte coletivo', 'tunel/viaduto/ponte-interior de veiculo de carga', 'estacionamento público',
-    'via pública', 'lojas', 'posto de gasolina',
-    'via pública-interior de veiculo de carga', 'area de descanso-interior de veiculo de carga', 'interior de veículo particular',
-    'praça de pedágio', 'semáforo-outros', 'farmácia/drogaria',
-    'area de descanso-outros', 'terreno baldio', 'restaurante-estacionamento',
-    'ciclofaixa', 'semáforo-interior de veiculo particular', 'posto policial-outros',
-    'rodoviário-estacioanamento', 'acostamento-interior de veiculo de carga', 'hospital-outros',
-    'distribuidora', 'praça de pedágio-estacionamento', 'veículo em movimento',
-    'posto de auxílio-interior de veiculo particular', 'praça-outros', 'construção abandonada',
-    'posto de fiscalização-outros', 'interior de veículo de carga',
-    'outros', 'hospital-almoxarifado', 'balança',
-    'semáforo', 'agência-outros', 'tunel/viaduto/ponte-outros',
-    'restaurante', 'depósito', 'outros-estacionamento',
-    'posto de fiscalização', 'praça-interior de veículo de carga', 'lanchonete/pastelaria/pizzaria-estacionamento',
-    'loteamento', 'acostamento-outros', 'posto de auxílio-estacionamento',
-    'bar/botequim-outros', 'rodoviário-garagem', 'delegacia',
-    'hospital', 'praça de pedágio-interior de veiculo de carga', 'túnel/viaduto/ponte',
-    'via pública-interior de veiculo particular', 'posto de auxílio-cabine/posto/escritório', 'transeunte',
-    'desmanche', 'metalúrgica-outros', 'posto de auxílio-outros',
-    'aeroportuário', 'semáforo-interior de veiculo de carga', 'acostamento-transeunte',
-    'acostamento', 'outros-banheiro', 'portuário-outros',
-    'área comum'
+    'obra-construcao', 'semaforo-interior-de-veiculo-de-carga', 'praca-de-pedagio-cabine-posto',
+    'mercado', 'loja-de-material-de-construcao', 'praca',
+    'construcao-abandonada', 'distribuidora', 'praca-de-pedagio-interior-de-veiculo-de-carga',
+    'ciclofaixa', 'via-publica-ciclofaixa', 'praca-interior-de-veiculo-de-carga',
+    'tunel-viaduto-ponte-outros', 'posto-de-auxilio-cabine-posto-escritorio', 'feira-livre-outros',
+    'posto-de-auxilio-outros', 'interior-de-transporte-coletivo', 'restaurante',
+    'acostamento-outros', 'restaurante-outros', 'semaforo-outros',
+    'interior-de-veiculo-de-carga', 'bar-botequim', 'posto-de-auxilio',
+    'tunel-viaduto-ponte-transeunte', 'metroviario-e-ferroviario-metropolitano', 'rodoviario-estacioanamento',
+    'tunel-viaduto-ponte-interior-de-veiculo-de-carga', 'mecanica-borracharia', 'oficina',
+    'via-publica', 'posto-de-auxilio-interior-de-veiculo-de-carga', 'lote-de-terreno',
+    'sala-de-reuniões-convencões', 'posto-de-gasolina', 'praca-de-pedagio-estacionamento',
+    'delegacia', 'hospital-outros', 'posto-policial-outros',
+    'lanchonete-pastelaria-pizzaria-outros', 'terreno-baldio', 'padaria-confeitaria',
+    'outros-estacionamento', 'posto-de-auxilio-interior-de-veiculo-particular', 'praca-de-pedagio-outros',
+    'delegacia-distrito-policial', 'outros', 'posto-de-fiscalizacao-outros',
+    'transportadora', 'conveniência', 'armazem-emporio',
+    'rodoviario-outros', 'area-de-descanso', 'fabrica-industria',
+    'desmanche', 'deposito', 'hospital',
+    'area-de-descanso-interior-de-veiculo-particular', 'atacadista', 'area-de-descanso-outros',
+    'rodoviario', 'area-comum', 'rodoviario-garagem',
+    'restaurante-estacionamento', 'aeroportuario', 'veiculo-em-movimento',
+    'tunel-viaduto-ponte', 'metalurgica-outros', 'estacionamento',
+    'acostamento', 'transeunte', 'farmacia-drogaria',
+    'agência-outros', 'interior-veiculo-de-carga', 'via-publica-transeunte',
+    'praca-de-pedagio', 'praca-outros', 'portuario-outros',
+    'area-de-descanso-transeunte', 'bar-botequim-outros', 'estacionamento-particular',
+    'lanchonete-pastelaria-pizzaria-estacionamento', 'parque-bosque-horto-reserva', 'semaforo-interior-de-veiculo-particular',
+    'balanca', 'interior-de-veiculo-particular', 'acougue-frigorifico-outros',
+    'posto-de-auxilio-estacionamento', 'acostamento-transeunte', 'lojas',
+    'acougue-frigorifico-camara-frigorifica', 'area-de-descanso-interior-de-veiculo-de-carga', 'posto-de-fiscalizacao',
+    'acostamento-interior-de-veiculo-de-carga', 'loteamento', 'via-publica-interior-de-veiculo-particular',
+    'acougue-frigorifico', 'estacionamento-publico', 'outros-banheiro',
+    'hospital-almoxarifado', 'via-publica-interior-de-veiculo-de-carga', 'auto-pecas',
+    'balanca-outros'
     ]
     SUBTYPE = len(columns)
     subTypeIndex = {}
@@ -140,19 +161,23 @@ def createNodesDf(mergedGdf):
         rowsNpArray[indexInDf][TIME + timeShift] += 1
         #parses subtype
         subType = row['DESCR_SUBTIPOLOCAL']
-        if not pd.isnull(subType) and subTypeIndex.get(subType.lower()) is not None:
-            encodedIndex = subTypeIndex[subType.lower()]
+        if not pd.isnull(subType) and subTypeIndex.get(normalize(subType)) is not None:
+            encodedIndex = subTypeIndex[normalize(subType)]
             rowsNpArray[indexInDf][SUBTYPE + encodedIndex] += 1
     #update columns to have descr_subtipolocal
     columns = columns + local_subtype
     nodesDf = pd.DataFrame(rowsNpArray, columns=columns)
     return nodesDf
 
-def createCrimeGraphDf(crimeOcorrencesGdf, cityGraphNodes, kNeighbors=3):
+def createCrimeGraphDf(crimeOcorrencesGdf, cityGraphNodes, kNeighbors=10, maxDist=1000):
+    #MUST BE IN THE SAME CRS
     #projects ocorrences into citygraph
-    merge = joinCrimeWithCity(crimeOcorrencesGdf, cityGraphNodes)
-    edgesDf = createEdgesDf(merge, "index_right", kNeighbors)
-    nodesDf = createNodesDf(merge)
+    merge = crimeOcorrencesGdf.sjoin_nearest(cityGraphNodes, distance_col="distance")
+    #only keep one node per ocorrence
+    merge = merge[~merge.index.duplicated(keep="first")]
+    #create Graph
+    edgesDf=createEdgesDf(merge, "index_right", kNeighbors, maxDist)
+    nodesDf=createNodesDf(merge)
     return nodesDf, edgesDf
 
 

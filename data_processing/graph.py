@@ -167,6 +167,7 @@ def createNodesDf(mergedGdf):
     #update columns to have descr_subtipolocal
     columns = columns + local_subtype
     nodesDf = pd.DataFrame(rowsNpArray, columns=columns)
+    nodesDf['node_id'] = nodesDf['node_id'].astype('int64')
     return nodesDf
 
 def createCrimeGraphDf(crimeOcorrencesGdf, cityGraphNodes, kNeighbors=10, maxDist=1000):

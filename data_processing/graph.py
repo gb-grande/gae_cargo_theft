@@ -271,7 +271,7 @@ def createCrimeGraphDf(crimeOcorrencesGdf, cityGraphNodes, kNeighbors=10, maxDis
     merge = merge[~merge.index.duplicated(keep="first")]
     #create Graph
     edgesDf=createEdgesDf(merge, "osmid", kNeighbors, maxDist)
-    nodesDf=createNodesDf(merge)
+    nodesDf=createNodesDf(merge, False)
     return nodesDf, edgesDf
 
 

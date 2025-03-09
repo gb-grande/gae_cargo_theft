@@ -3,40 +3,55 @@
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import numpy as np
 from dash import Dash, dcc, html, Input, Output
 import sys
 
 #read filename 
-dfName = sys.argv[1]
-df = pd.read_csv(dfName)
+dfEmbeddingsName = sys.argv[1]
+df = pd.read_csv(dfEmbeddingsName)
 
-#used when plotting parallelCoordinates
+occurrencesDfName = sys.argv[2]
+dfOccurrences = pd.read_csv(occurrencesDfName)
 
-def buildParallelCoordinates(df, columnsToBePlotted):
-    notZeroColumns = []
+
+
+def buildSankey(filteredOccurDf):
+    timeLabels = filteredOccurDf['time'].unique()
+    localSubtypeLabels = filteredOccurDf['local_subtype'].unique()
+    labels = np.concatenate((['total'], timeLabels, localSubtypeLabels))
+    labelsIndex = dict()
+    for i in range(0, len(labels)):
+        labelsIndex[labels[i]] = i
+    source = []
+    target = []
+    values = []
+    vc = filteredOccurDf[['time', 'local_subtype']].value_counts()
+    times = filteredOccurDf['time'].value_counts()
+    #deals with total and times first
+    for index, item in times.items():
+        source.append(labelsIndex['total'])
+        target.append(labelsIndex[index])
+        values.append(item)
     
-    for col, value in (df[columnsToBePlotted].sum() > 0).items():
-        if value:
-            notZeroColumns.append(col)
-    maxValue = df[columnsToBePlotted].max().max()
-    fig = go.Figure(data=
-        go.Parcoords(
-            line = dict(color = df['node_id'],
-                        colorscale = 'Viridis',
-                        showscale=True
-                       ),
-            dimensions=[
-                dict(
-                    range = [0, int(maxValue)],
-                    values=df[col],
-                    label=col,
-                    tickvals=list(range(0, int(maxValue)+1))
-                ) for col in notZeroColumns
-            ]
-        )
-    )
+    for index, item in vc.items():
+        source.append(labelsIndex[index[0]])
+        target.append(labelsIndex[index[1]])
+        values.append(item)
+    fig = go.Figure(data=[go.Sankey(
+    node = dict(
+      pad = 15,
+      thickness = 20,
+      line = dict(color = "black", width = 0.5),
+      label = labels,
+      color = "blue"
+    ),
+    link = dict(
+      source = source, 
+      target = target,
+      value = values
+  ))])
     return fig
-
 
 app = Dash(__name__)
 app.layout = html.Div([
@@ -50,7 +65,7 @@ app.layout = html.Div([
         config={"scrollZoom": True},
     ),
     dcc.Graph(
-        id="parallel-coordinates",
+        id="sankey-diag",
         config={"scrollZoom": True},
     )
 ])
@@ -96,21 +111,19 @@ def update_map(selectedData):
 
 
 @app.callback(
-    Output("parallel-coordinates", "figure"),
+    Output("sankey-diag", "figure"),
     Input("scatter-plot", "selectedData")
     
 )
-def update_parallelCoordinates(selectedData):
+def update_sankey(selectedData):
     # get selected points
     if selectedData:
         points = selectedData["points"]
         selected_indices = [p["pointIndex"] for p in points]  
-        filtered_df = df.iloc[selected_indices]
+        filtered_df = dfOccurrences.iloc[selected_indices]
     else:
-        filtered_df = df  # Se nenhum ponto for selecionado, mostrar tudo
-    #drop columns unused for visualization
-    columnsToBePlotted = list(filtered_df.columns.drop(["node_id", "dim0", "dim1", "latitude", "longitude"]))
-    fig = buildParallelCoordinates(filtered_df, columnsToBePlotted)
+        filtered_df = dfOccurrences  # Se nenhum ponto for selecionado, mostrar tudo
+    fig = buildSankey(filtered_df)
     return fig
 
 

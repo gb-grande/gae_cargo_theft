@@ -7,6 +7,10 @@ import numpy as np
 from dash import Dash, dcc, html, Input, Output
 import sys
 
+
+if len(sys.argv) != 3:
+    print("Usage: python embeddingsOnMap.py pathToEmbeddings.csv pathToOcurrences.csv")
+
 #read filename 
 dfEmbeddingsName = sys.argv[1]
 df = pd.read_csv(dfEmbeddingsName)

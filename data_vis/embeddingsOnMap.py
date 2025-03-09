@@ -10,6 +10,7 @@ import sys
 
 if len(sys.argv) != 3:
     print("Usage: python embeddingsOnMap.py pathToEmbeddings.csv pathToOcurrences.csv")
+    exit()
 
 #read filename 
 dfEmbeddingsName = sys.argv[1]

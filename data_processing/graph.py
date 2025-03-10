@@ -5,16 +5,29 @@ import geopandas as gpd
 import numpy as np
 from scipy.spatial import KDTree
 import shapely
+import argparse
+import os
+
+import shapely.wkt
 
 #reads df and converts to gdf with global crs, must convert crs before merging with another dataframe
 def convertDfToGdf(df):
     gdf = gpd.GeoDataFrame(df, geometry=gpd.points_from_xy(df.LONGITUDE, df.LATITUDE), crs="EPSG:4326")
     return gdf
 
+#converts graph to gpd and saves it
+def saveGraphToDisk(graph, folderPath, graphName):
+    print("Converting graph to gdf...")
+    g_nodes, _ = ox.graph_to_gdfs(graph)
+    print("Writing gdf to csv...")
+    g_nodes.to_csv(f"{folderPath}/{graphName}_nodes.csv")
+    print("Done writing gdfs to csv...")
+    return g_nodes
+
 #joins crime df with city graph nodes df
-def joinCrimeWithCity(crimeGdf, cityGraphNodes):
+def joinCrimeWithCity(crimeDf, cityGraphNodes):
     #first converts to the same crs
-    crimeDf = crimeDf.to_crs("EPSG:31983")
+    crimeGdf = crimeDf.to_crs("EPSG:31983")
     cityGraphNodes = cityGraphNodes.to_crs("EPSG:31983")
     merge =crimeGdf.sjoin_nearest(cityGraphNodes, distance_col="distance")
     #if there are points which are equidistant, this operation guarantee there will be only one point assigned to a node
@@ -264,34 +277,55 @@ def createNodesDf(mergedGdf, occurrencesDf=True):
     return nodesDf
 
 def createCrimeGraphDf(crimeOcorrencesGdf, cityGraphNodes, kNeighbors=10, maxDist=1000):
-    #MUST BE IN THE SAME CRS
-    #projects ocorrences into citygraph
-    merge = crimeOcorrencesGdf.sjoin_nearest(cityGraphNodes, distance_col="distance")
-    #only keep one node per ocorrence
-    merge = merge[~merge.index.duplicated(keep="first")]
-    #create Graph
-    edgesDf=createEdgesDf(merge, "osmid", kNeighbors, maxDist)
-    nodesDf=createNodesDf(merge, False)
-    return nodesDf, edgesDf
+    print("Merging crimesDf with graph nodes")
+    merge = joinCrimeWithCity(crimeOcorrencesGdf, cityGraphNodes)
+    print("creating edges df")
+    edgesDf = createEdgesDf(merge, "osmid", kNeighbors, maxDist)
+    print("creating nodes")
+    nodesDf, crimeOcorrencesGdf = createNodesDf(merge, True)
+    return nodesDf, edgesDf, crimeOcorrencesGdf
 
 
-#converts graph to gpd and saves it
-def saveGraphToDisk(graph, graphName):
-    print("Converting graph to gdf...")
-    g_nodes, g_edges = ox.graph_to_gdfs(graph)
-    print("Writing gdfs to csv...")
-    g_nodes.to_csv(f"{graphName}_nodes.csv")
-    g_edges.to_csv(f"{graphName}_edges.csv")
-    print("Done writing gdfs to csv...")
 
+parser = argparse.ArgumentParser(
+    prog="Graph builder",
+    description="Creates a graph and occurrences df to be used for further processing",
+)
 
+path, _= os.path.split(__file__)
+
+#args handling
+parser.add_argument("crimeDf", action='store')
+parser.add_argument("graph_name")
+parser.add_argument('-g', '--graph', action='store')
 #downloads graph and plot it
+arg = parser.parse_args()
+if arg.graph == None:
+    print("Download graph")
+    originalGraph = ox.graph_from_place("São Paulo", network_type="drive")
+    print("Converting to undirected graph")
+    undirectedGraph = ox.convert.to_undirected(originalGraph)
+    print("Finished converting")
+    city_nodes = saveGraphToDisk(undirectedGraph, path + "/../data_processed", "spCidade")
+else:
+    print('reading nodes file')
+    city_nodes = pd.read_csv(arg.graph)
+    city_nodes['geometry'] = city_nodes['geometry'].apply(shapely.wkt.loads)
+    print('read node files')
+    city_nodes = gpd.GeoDataFrame(city_nodes, crs="EPSG:4326")
+    
+print("Reading Crime df")
+crimeDf = pd.read_csv(arg.crimeDf)
+print("Using only S.PAULO points")
+crimeDf = crimeDf[crimeDf['CIDADE'] == "S.PAULO"]
+crimeDf.reset_index(inplace=True)
+crimeGdf = convertDfToGdf(crimeDf)
+gNodes, gEdges, occurrencesDf = createCrimeGraphDf(crimeGdf, city_nodes)
+pathWithName = path + "/../data_processed/" + arg.graph_name
+gNodes.to_csv(pathWithName + "_nodes.csv", index=False)
+gEdges.to_csv(pathWithName + "_edges.csv", index=False)
+occurrencesDf.to_csv(pathWithName + "_occurrences.csv", index=False)
 
-print("Download graph")
-originalGraph = ox.graph_from_place("São Paulo", network_type="drive")
-fig, ax = ox.plot_graph(originalGraph)
-print("Converting to undirected graph")
-undirectedGraph = ox.convert.to_undirected(originalGraph)
-print("Finished converting")
 
-saveGraphToDisk(undirectedGraph, "spCidade")
+
+

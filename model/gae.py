@@ -35,6 +35,12 @@ def getEmbedDimSuggestion(numericFeatures, explainedVariancePercentage=0.9999):
     pca.fit(numericFeatures)
     return len(pca.components_)
 
+def createEmbeddingsDf(embeddings, nodesId):
+    embeddingsColumns = [f"dim{x}" for x in range(embeddings.shape[1])]
+    columns = ["node_id"] + embeddingsColumns
+    df = pd.DataFrame(np.concatenate((nodesId.reshape(-1, 1), embeddings), axis=1), columns=columns)
+    return df
+
 
 class GCNEncoder(torch.nn.Module):
     def __init__(self, input_dim, hidden_dim, out_dim):
@@ -55,6 +61,7 @@ class GraphAutoEncoder(gnn.GAE):
         else:
             self.lossFunc = lossFunc
         self.optimizer = torch.optim.Adam(self.parameters(), lr=0.01)
+        self.to(device)
     #data is expected to be from a random link split transform
     def trainModel(self, data):
         self.train()
@@ -103,6 +110,63 @@ argParser = argparse.ArgumentParser(prog="Graph Autoencoder"
 
 argParser.add_argument("nodesDf", action="store")
 argParser.add_argument("edgesDf", action="store")
+argParser.add_argument("resultDf", action="store")
 argParser.add_argument("-e", "--epochs", action="store")
 argParser.add_argument("-d", "--dimEmbed", action="store")
+args = argParser.parse_args()
 
+isCuda = torch.cuda.is_available()
+device = torch.device('cuda' if isCuda else 'cpu')
+print(f"Is cuda avaliable? {isCuda}")
+
+print("Reading csvs")
+nodesDf = pd.read_csv(args.nodesDf)
+edgedDf = pd.read_csv(args.edgesDf)
+
+print("Reassembling graph")
+G = createGraphFromDf(nodesDf, edgedDf)
+
+data = utils.from_networkx(G)
+numeric_features = nodesDf.iloc[:, 3:]
+
+if args.dimEmbed == None:
+    suggestedDim = getEmbedDimSuggestion(numeric_features)
+    embedDim = max(suggestedDim, 32)
+    print(f"Embed dim to be used: {embedDim}")
+else:
+    embedDim = int(args.dimEmbed)
+
+#split data between trainign and testing
+transform = tg.transforms.RandomLinkSplit(is_undirected=True, num_val=0,add_negative_train_samples=True, split_labels=True)
+train_data, _, test_data = transform(data)
+train_data.numeric = train_data.numeric.float()
+test_data.numeric = test_data.numeric.float()
+
+#model initialization
+inputDim = data.numeric.shape[1]
+hiddenDim =max(64,embedDim)
+encoder = GCNEncoder(inputDim, hiddenDim, embedDim)
+model = GraphAutoEncoder(encoder, device)
+
+#putting train and test data on the same device as the model
+train_data.to(device)
+test_data.to(device)
+
+epochs = int(args.epochs) if args.epochs != None else 3000
+
+print(f"Beginning train for {epochs}")
+model.trainLoop(train_data, test_data, epochs)
+
+print("Generating embeddings")
+
+data.numeric = data.numeric.float()
+data.to(device)
+embeddings = model.genEmbeddings(data)
+#umap for cluster visualization
+print("Producing umap embeddings")
+umapEmbeddings = umap.UMAP(n_components=2, random_state=42).fit_transform(embeddings)
+
+nodeIdList = data.nodeId.detach().cpu().numpy().astype(np.int64)
+embeddingsDf = createEmbeddingsDf(umapEmbeddings, nodeIdList)
+embeddingsWithInfo = embeddingsDf.merge(nodesDf, on="node_id")
+embeddingsWithInfo.to_csv(args.resultDf, index=False)
